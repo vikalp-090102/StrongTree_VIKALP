@@ -56,7 +56,7 @@ def main(argv):
     data = pd.read_csv(data_path + input_file)
     '''Name of the column in the dataset representing the class label.
     In the datasets we have, we assume the label is target. Please change this value at your need'''
-    label = 'target'
+    label = 'income'
 
     # Tree structure: We create a tree object of depth d
     tree = Tree(depth)
