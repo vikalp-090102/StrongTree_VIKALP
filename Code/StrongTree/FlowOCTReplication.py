@@ -2,6 +2,7 @@
 from gurobipy import *
 import pandas as pd
 import sys
+import os
 import time
 from Tree import Tree
 from FlowOCT import FlowOCT
