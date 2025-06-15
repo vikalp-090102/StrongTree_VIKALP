@@ -5,11 +5,11 @@ import time
 import getopt
 import csv
 import pandas as pd
-from mip import Model, BINARY, CONTINUOUS, minimize  # python-mip with CBC
+from mip import Model, CONTINUOUS, minimize  # using CBC via python-mip
 from sklearn.model_selection import train_test_split
 
 # ---------------------------
-# Logger: Redirect output to both console and a log file.
+# Logger: Redirect output to console and a log file.
 # ---------------------------
 class Logger:
     def __init__(self, filepath):
@@ -23,7 +23,7 @@ class Logger:
         self.log.flush()
 
 # ---------------------------
-# Tree class: For storing tree properties (here, just depth)
+# Tree class: (For storing tree properties; here, just the depth)
 # ---------------------------
 class Tree:
     def __init__(self, depth):
@@ -31,78 +31,78 @@ class Tree:
 
 # ---------------------------
 # Dummy evaluation functions.
-# Replace these with your actual evaluation logic.
+# These are now defined as continuous functions of the single variable x.
+# You may replace these with appropriate evaluation logic later.
 # ---------------------------
-def get_acc(primal, data, b_value, beta_value, p_value):
-    # Dummy: always returns 0.95.
-    return 0.95
+def get_acc(primal, data, x_value):
+    # Dummy accuracy: maximum (1) when x==0.5, and degrades linearly as |x-0.5| increases.
+    return 1 - abs(x_value - 0.5)
 
-def get_mae(primal, data, b_value, beta_value, p_value):
-    return 0.1
+def get_mae(primal, data, x_value):
+    return abs(x_value - 0.5)
 
-def get_mse(primal, data, b_value, beta_value, p_value):
-    return 0.05
+def get_mse(primal, data, x_value):
+    return (x_value - 0.5) ** 2
 
-def get_r_squared(primal, data, b_value, beta_value, p_value):
-    return 0.9
+def get_r_squared(primal, data, x_value):
+    # Dummy R^2: maximum (1) when x==0.5; for our simple function we define:
+    return 1 - (x_value - 0.5) ** 2 / 0.25
 
-def print_tree(primal, b_value, beta_value, p_value):
-    print("Decision Tree Structure:")
-    print("b values:", b_value)
-    print("beta values:", beta_value)
-    print("p values:", p_value)
+def print_tree(primal, x_value):
+    print("Decision Tree Structure (continuous surrogate):")
+    print("x value:", x_value)
 
 # ---------------------------
-# FlowOCT class using python-mip and CBC solver.
+# FlowOCT class using python-mip with CBC.
+# We now build a formulation with a single continuous variable x in [0,1]
+# and a quadratic objective that depends on lambda.
 # ---------------------------
 class FlowOCT:
     def __init__(self, data, label, tree, lam, time_limit, mode):
         self.data = data
         self.label = label
         self.tree = tree
-        self.lam = lam
+        self.lam = lam            # regularization parameter λ
         self.time_limit = time_limit
         self.mode = mode
-        # Create a MILP model with minimization and force CBC as solver.
+        # Use a continuous variable x in [0, 1] as our surrogate decision variable.
         self.model = Model(sense=minimize, solver_name="cbc")
-        # These lists will hold decision variables. You can modify this formulation as needed.
-        self.b = []      # e.g. binary variables for branch decisions
-        self.beta = []   # continuous parameters (e.g. thresholds or slopes)
-        self.p = []      # continuous parameters (e.g. predictions)
     
     def create_primal_problem(self):
-        # For demonstration purposes, we create one variable in each list.
-        self.b.append(self.model.add_var(var_type=BINARY, name="b0"))
-        self.beta.append(self.model.add_var(var_type=CONTINUOUS, lb=-10, ub=10, name="beta0"))
-        self.p.append(self.model.add_var(var_type=CONTINUOUS, lb=0, ub=10, name="p0"))
+        # Create one continuous variable x between 0 and 1.
+        self.x = self.model.add_var(var_type=CONTINUOUS, lb=0, ub=1, name="x")
+        # Define a quadratic objective that depends on lambda:
+        #
+        #      f(x) = λ*x + (1-λ)*(1-x) + (x - 0.5)².
+        #
+        # Notice that if you differentiate f(x) (for λ in [0,1]),
+        # you obtain the optimum at x = 1 - λ.
+        #
+        # As λ varies in [0,1], x* = 1 - λ will vary continuously.
+        self.model.objective = minimize(self.lam * self.x + (1 - self.lam) * (1 - self.x) + (self.x - 0.5) ** 2)
         
-        # A dummy objective that penalizes the binary variable with lambda and adds the continuous variables.
-        self.model.objective = minimize(self.lam * self.b[0] + self.beta[0] + self.p[0])
-        # Dummy constraint: force beta0 + p0 to be at least 1.
-        self.model.add_constr(self.beta[0] + self.p[0] >= 1)
-        
-        # Set a time limit (python-mip supports this via the max_seconds attribute).
+        # Set time limit if provided.
         if self.time_limit:
             self.model.max_seconds = self.time_limit
 
 # ---------------------------
-# Main function.
+# Main Function.
 # ---------------------------
 def main(argv):
     print(argv)
     input_file = None      # e.g., "adult.csv"
-    depth = None           # maximum tree depth (integer)
-    time_limit = None      # time limit in seconds (integer)
-    _lambda = None         # lambda, used as a regularization parameter (float)
-    input_sample = None    # sample index to choose a random seed (integer)
-    calibration = None     # 1: use calibration split; 0: do not (integer)
+    depth = None           # maximum depth (we keep this for consistency)
+    time_limit = None      # time limit in seconds
+    _lambda = None         # the regularization parameter λ
+    input_sample = None    # sample index (to choose a random seed)
+    calibration = None     # calibration flag (1 or 0)
     mode = "classification"
 
-    # Use one of several predefined random seeds based on input_sample.
+    # Predefined random seeds based on input_sample.
     random_states_list = [41, 23, 45, 36, 19, 123]
 
     try:
-        opts, args = getopt.getopt(argv, "f:d:t:l:i:c:m:",
+        opts, args = getopt.getopt(argv, "f:d:t:l:i:c:m:", 
                                    ["input_file=", "depth=", "timelimit=", "lambda=", "input_sample=", "calibration=", "mode="])
     except getopt.GetoptError:
         sys.exit(2)
@@ -123,30 +123,24 @@ def main(argv):
             mode = arg
 
     start_time = time.time()
-    # Assumes that the DataSets folder is located two levels up.
     data_path = os.getcwd() + '/../../DataSets/'
     data = pd.read_csv(data_path + input_file)
-    # The class label column (here, "income")
     label = "income"
-    # Create a tree object using the specified depth.
     tree = Tree(depth)
 
     ##########################################################
     # Output Setup
     ##########################################################
     approach_name = "FlowOCT"
-    out_put_name = (f"{input_file}_{input_sample}_{approach_name}_d_{depth}_t_{time_limit}_lambda_{_lambda}_c_{calibration}")
+    out_put_name = f"{input_file}_{input_sample}_{approach_name}_d_{depth}_t_{time_limit}_lambda_{_lambda}_c_{calibration}"
     out_put_path = os.getcwd() + '/../../Results/'
-    # Redirect output:
     sys.stdout = Logger(out_put_path + out_put_name + ".txt")
 
     ##########################################################
     # Data Splitting
     ##########################################################
-    # Split data: 75% train, 25% test
     data_train, data_test = train_test_split(
         data, test_size=0.25, random_state=random_states_list[input_sample - 1])
-    # Further split train for calibration if needed.
     data_train_calibration, data_calibration = train_test_split(
         data_train, test_size=0.33, random_state=random_states_list[input_sample - 1])
     if calibration == 1:
@@ -162,80 +156,46 @@ def main(argv):
     end_time = time.time()
     solving_time = end_time - start_time
 
-    ##########################################################
-    # Retrieve Solution
-    ##########################################################
-    b_value = [var.x for var in primal.b]
-    beta_value = [var.x for var in primal.beta]
-    p_value = [var.x for var in primal.p]
+    # Retrieve the optimized x value.
+    x_value = primal.x.x
 
     print("\n\n")
-    print_tree(primal, b_value, beta_value, p_value)
+    print_tree(primal, x_value)
     print("\n\nTotal Solving Time", solving_time)
     print("obj value", primal.model.objective_value)
-    print("Total Callback counter (Integer)", 0)
-    print("Total Successful Callback counter (Integer)", 0)
-    print("Total Callback Time (Integer)", 0)
-    print("Total Successful Callback Time (Integer)", 0)
 
     ##########################################################
     # Evaluation
     ##########################################################
-    train_acc = test_acc = calibration_acc = 0
-    train_mae = test_mae = calibration_mae = 0
-    train_r_squared = test_r_squared = calibration_r_squared = 0
-
-    if mode == "classification":
-        train_acc = get_acc(primal, data_train, b_value, beta_value, p_value)
-        test_acc = get_acc(primal, data_test, b_value, beta_value, p_value)
-        calibration_acc = get_acc(primal, data_calibration, b_value, beta_value, p_value)
-    elif mode == "regression":
-        train_mae = get_mae(primal, data_train, b_value, beta_value, p_value)
-        test_mae = get_mae(primal, data_test, b_value, beta_value, p_value)
-        calibration_mae = get_mae(primal, data_calibration, b_value, beta_value, p_value)
-        train_mse = get_mse(primal, data_train, b_value, beta_value, p_value)
-        test_mse = get_mse(primal, data_test, b_value, beta_value, p_value)
-        calibration_mse = get_mse(primal, data_calibration, b_value, beta_value, p_value)
-        train_r_squared = get_r_squared(primal, data_train, b_value, beta_value, p_value)
-        test_r_squared = get_r_squared(primal, data_test, b_value, beta_value, p_value)
-        calibration_r_squared = get_r_squared(primal, data_calibration, b_value, beta_value, p_value)
+    # Our dummy evaluation functions now take x_value.
+    train_acc = get_acc(primal, data_train, x_value)
+    test_acc = get_acc(primal, data_test, x_value)
+    calibration_acc = get_acc(primal, data_calibration, x_value)
+    train_mae = get_mae(primal, data_train, x_value)
+    test_mse = get_mse(primal, data_test, x_value)
+    train_r2 = get_r_squared(primal, data_train, x_value)
 
     print("obj value", primal.model.objective_value)
-    if mode == "classification":
-        print("train acc", train_acc)
-        print("test acc", test_acc)
-        print("calibration acc", calibration_acc)
-    elif mode == "regression":
-        print("train mae", train_mae)
-        print("train mse", train_mse)
-        print("train r^2", train_r_squared)
+    print("train acc", train_acc)
+    print("test acc", test_acc)
+    print("calibration acc", calibration_acc)
+    print("train mae", train_mae)
+    print("test mse", test_mse)
+    print("train r^2", train_r2)
 
     ##########################################################
     # Write Output Files
     ##########################################################
     primal.model.write(out_put_path + out_put_name + ".lp")
     result_file = out_put_name + ".csv"
-    with open(out_put_path + result_file, mode="a") as results:
+    with open(out_put_path + result_file, mode="a", newline="") as results:
         results_writer = csv.writer(results, delimiter=",", quotechar='"', quoting=csv.QUOTE_NONNUMERIC)
-        if mode == "classification":
-            results_writer.writerow([
-                approach_name, input_file, train_len, depth, _lambda, time_limit,
-                primal.model.status, primal.model.objective_value, train_acc,
-                (primal.model.gap * 100) if primal.model.gap is not None else None,
-                primal.model.num_solutions, solving_time,
-                0, 0, 0, 0, test_acc, calibration_acc, input_sample
-            ])
-        elif mode == "regression":
-            results_writer.writerow([
-                approach_name, input_file, train_len, depth, _lambda, time_limit,
-                primal.model.status, primal.model.objective_value, train_mae, test_mae, train_r_squared,
-                (primal.model.gap * 100) if primal.model.gap is not None else None,
-                primal.model.num_solutions, solving_time,
-                0, 0, 0, 0, test_mae, calibration_mae,
-                test_mse, calibration_mse,
-                test_r_squared, calibration_r_squared,
-                input_sample
-            ])
+        results_writer.writerow([
+            approach_name, input_file, train_len, depth, _lambda, time_limit,
+            primal.model.status, primal.model.objective_value, train_acc,
+            train_mae, test_mse, train_r2,
+            None, 0, solving_time, 0, 0, 0, 0, test_acc, calibration_acc, input_sample
+        ])
 
 if __name__ == "__main__":
     main(sys.argv[1:])
