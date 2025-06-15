@@ -38,9 +38,9 @@ def preprocess_data(data):
     Process the raw Adult dataset into a feature matrix X.
     Numeric features are min–max scaled and categorical features are one–hot encoded.
     """
-    # Define the numeric columns.
+    # Define numeric columns.
     numeric_cols = ["age", "fnlwgt", "educational-num", "capital-gain", "capital-loss", "hours-per-week"]
-    # All other columns (except 'income') are treated as categorical.
+    # All other columns (except 'income') are considered categorical.
     categorical_cols = [col for col in data.columns if col not in numeric_cols + ["income"]]
     
     data_numeric = data[numeric_cols].copy()
@@ -116,7 +116,7 @@ class FlowOCT_LogReg:
         self.w = cp.Variable(self.d)
         self.b = cp.Variable()
         
-        # Logistic loss: for label y_i in {-1, 1}, loss term = logistic(-y_i*(wᵀx_i+b)).
+        # Logistic loss: for each sample, loss = logistic(-y*(wᵀx+b)).
         losses = cp.logistic(-cp.multiply(self.y, self.X @ self.w + self.b))
         loss = cp.sum(losses) / self.n
         
@@ -125,8 +125,9 @@ class FlowOCT_LogReg:
         objective = cp.Minimize(loss + reg)
         
         self.problem = cp.Problem(objective)
-        # Solve using the SCS solver, using 'time_lim' parameter.
-        self.problem.solve(solver=cp.SCS, time_lim=self.time_limit)
+        # Pass the time limit using a solver options dictionary.
+        solver_opts = {"time_lim": float(self.time_limit)}
+        self.problem.solve(solver=cp.SCS, **solver_opts)
 
 # ---------------------------
 # Main Function.
@@ -170,12 +171,12 @@ def main(argv):
     data_path = os.getcwd() + '/../../DataSets/'
     data = pd.read_csv(data_path + input_file)
     
-    # Preprocess features and obtain label vector.
+    # Preprocess features and obtain the label vector.
     X_full = preprocess_data(data)
     y_full = get_true_labels_lr(data)
     X_full = X_full.values  # Convert to NumPy array.
     
-    # Data splitting into train, test, and calibration sets.
+    # Split data into train, test, and calibration sets.
     X_train, X_test, y_train, y_test = train_test_split(
         X_full, y_full, test_size=0.25, random_state=random_states_list[input_sample - 1])
     X_train_cal, X_cal, y_train_cal, y_cal = train_test_split(
