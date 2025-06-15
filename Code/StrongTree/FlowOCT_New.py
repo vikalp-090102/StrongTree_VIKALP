@@ -45,7 +45,8 @@ def preprocess_data(data):
     
     data_numeric = data[numeric_cols].copy()
     for col in numeric_cols:
-        data_numeric[col] = (data_numeric[col] - data_numeric[col].min()) / (data_numeric[col].max() - data_numeric[col].min())
+        data_numeric[col] = (data_numeric[col] - data_numeric[col].min()) / \
+                            (data_numeric[col].max() - data_numeric[col].min())
     
     data_categorical = pd.get_dummies(data[categorical_cols], drop_first=True)
     X = pd.concat([data_numeric, data_categorical], axis=1)
@@ -104,7 +105,7 @@ class FlowOCT_LogReg:
         self.X = X  # Feature matrix (NumPy array)
         self.y = y  # Labels in {-1, 1} (NumPy array)
         self.lam = lam            # Regularization parameter λ
-        self.time_limit = time_limit
+        self.time_limit = time_limit  # (Not used in ECOS below)
         self.mode = mode
         self.n, self.d = self.X.shape
         self.w = None
@@ -125,9 +126,8 @@ class FlowOCT_LogReg:
         objective = cp.Minimize(loss + reg)
         
         self.problem = cp.Problem(objective)
-        # Pass the time limit using a solver options dictionary.
-        solver_opts = {"time_lim": float(self.time_limit)}
-        self.problem.solve(solver=cp.SCS, **solver_opts)
+        # Use the ECOS solver (which does not require a time limit parameter).
+        self.problem.solve(solver=cp.ECOS)
 
 # ---------------------------
 # Main Function.
