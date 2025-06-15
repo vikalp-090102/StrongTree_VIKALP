@@ -31,34 +31,30 @@ class Tree:
         self.depth = depth
 
 # ---------------------------
-# Data pre-processing functions.
+# Data Preprocessing Functions.
 # ---------------------------
 def preprocess_data(data):
     """
     Process the raw Adult dataset into a feature matrix X.
-    Numeric columns are min–max scaled and categorical columns are one-hot encoded.
+    Numeric features are min–max scaled and categorical features are one–hot encoded.
     """
-    # Define the numeric columns; you can adjust this list.
+    # Define the numeric columns.
     numeric_cols = ["age", "fnlwgt", "educational-num", "capital-gain", "capital-loss", "hours-per-week"]
     # All other columns (except 'income') are treated as categorical.
     categorical_cols = [col for col in data.columns if col not in numeric_cols + ["income"]]
     
-    # Scale numeric features using min–max scaling.
     data_numeric = data[numeric_cols].copy()
     for col in numeric_cols:
         data_numeric[col] = (data_numeric[col] - data_numeric[col].min()) / (data_numeric[col].max() - data_numeric[col].min())
     
-    # One-hot encode the categorical features.
     data_categorical = pd.get_dummies(data[categorical_cols], drop_first=True)
-    
-    # Concatenate numeric and categorical features.
     X = pd.concat([data_numeric, data_categorical], axis=1)
     return X
 
 def get_true_labels_lr(data):
     """
     Convert the income column to a binary label for logistic regression.
-    Returns 1 if income >50K, and –1 otherwise.
+    Returns 1 if income >50K, and -1 otherwise.
     """
     def convert(val):
         if isinstance(val, str):
@@ -68,7 +64,7 @@ def get_true_labels_lr(data):
     return y.values  # as a NumPy array
 
 # ---------------------------
-# Logistic regression evaluation helper functions.
+# Logistic Regression Helper Functions.
 # ---------------------------
 def sigmoid(z):
     return 1/(1+np.exp(-z))
@@ -76,7 +72,7 @@ def sigmoid(z):
 def predict_logreg(model, X):
     """
     Predict labels using the trained logistic regression model.
-    Returns predictions in {1, –1}.
+    Returns predictions in {-1, 1}.
     """
     z = X @ model.w.value + model.b.value
     preds = np.where(z >= 0, 1, -1)
@@ -87,11 +83,10 @@ def get_accuracy(true, pred):
 
 def get_regression_metrics(model, X, y):
     """
-    For demonstration, treat the sigmoid output as a probability and compute:
-     - MAE and MSE between predicted probabilities and true labels (mapped to 0/1)
-     - R² based on these probabilities.
+    Compute regression-style metrics using the sigmoid probability output
+    as a continuous prediction.
+    True labels are mapped from {-1, 1} to {0, 1}.
     """
-    # Map true labels: –1 -> 0, 1 -> 1.
     y_reg = (y + 1) / 2.0
     z = X @ model.w.value + model.b.value
     prob = sigmoid(z)
@@ -102,13 +97,13 @@ def get_regression_metrics(model, X, y):
     return mae, mse, r2
 
 # ---------------------------
-# Advanced FlowOCT_LogReg class (Logistic Regression using cvxpy)
+# Advanced Logistic Regression Class using cvxpy.
 # ---------------------------
 class FlowOCT_LogReg:
     def __init__(self, X, y, lam, time_limit, mode):
         self.X = X  # Feature matrix (NumPy array)
         self.y = y  # Labels in {-1, 1} (NumPy array)
-        self.lam = lam            # Regularization parameter lambda
+        self.lam = lam            # Regularization parameter λ
         self.time_limit = time_limit
         self.mode = mode
         self.n, self.d = self.X.shape
@@ -117,25 +112,24 @@ class FlowOCT_LogReg:
         self.problem = None
     
     def create_primal_problem(self):
-        # Decision variables: w (vector) and b (scalar)
+        # Define decision variables: w (vector) and b (scalar)
         self.w = cp.Variable(self.d)
         self.b = cp.Variable()
         
-        # Logistic loss: use cp.logistic which gives log(1+exp(z)).
-        # For label y_i in {-1, 1}, loss term: logistic(-y_i*(wᵀx_i+b)).
+        # Logistic loss: for label y_i in {-1, 1}, loss term = logistic(-y_i*(wᵀx_i+b)).
         losses = cp.logistic(-cp.multiply(self.y, self.X @ self.w + self.b))
         loss = cp.sum(losses) / self.n
         
-        # Regularization term: (lambda/2)*||w||²
+        # Regularization: (λ/2)*||w||²
         reg = (self.lam / 2) * cp.sum_squares(self.w)
-        
         objective = cp.Minimize(loss + reg)
+        
         self.problem = cp.Problem(objective)
-        # Solve the problem; if the solver supports a time limit, pass it.
-        self.problem.solve(max_secs=self.time_limit)
+        # Use the SCS solver with a time limit.
+        self.problem.solve(solver=cp.SCS, time_limit=self.time_limit)
 
 # ---------------------------
-# Main function.
+# Main Function.
 # ---------------------------
 def main(argv):
     print(argv)
@@ -176,14 +170,12 @@ def main(argv):
     data_path = os.getcwd() + '/../../DataSets/'
     data = pd.read_csv(data_path + input_file)
     
-    # Preprocess features and convert labels.
+    # Preprocess features and obtain label vector.
     X_full = preprocess_data(data)
     y_full = get_true_labels_lr(data)
-    # Convert X to a NumPy array for cvxpy.
-    X_full = X_full.values
-
-    # For splitting predictably, add the original index.
-    # Split data into train and test; further split train into calibration if needed.
+    X_full = X_full.values  # Convert to NumPy array.
+    
+    # Data splitting into train, test, and calibration sets.
     X_train, X_test, y_train, y_test = train_test_split(
         X_full, y_full, test_size=0.25, random_state=random_states_list[input_sample - 1])
     X_train_cal, X_cal, y_train_cal, y_cal = train_test_split(
@@ -210,7 +202,6 @@ def main(argv):
     end_time = time.time()
     solving_time = end_time - start_time
 
-    ##########################################################
     # Retrieve model parameters.
     w_val, b_val = model.w.value, model.b.value
 
@@ -225,8 +216,7 @@ def main(argv):
     print('Total Successful Callback Time (Integer):', 0)
     
     ##########################################################
-    # Evaluation: Predictions and computing metrics.
-    # For classification, we use sign( Xw+b ) in {-1, 1}.
+    # Evaluation: Predictions and metric computation.
     train_preds = predict_logreg(model, X_train_use)
     test_preds = predict_logreg(model, X_test)
     cal_preds = predict_logreg(model, X_cal)
@@ -235,7 +225,6 @@ def main(argv):
     test_acc = get_accuracy(y_test, test_preds)
     cal_acc = get_accuracy(y_cal, cal_preds)
     
-    # For regression-style metrics, compute predictions probabilities.
     train_mae, train_mse, train_r2 = get_regression_metrics(model, X_train_use, y_train_use)
     test_mae, test_mse, test_r2 = get_regression_metrics(model, X_test, y_test)
     
