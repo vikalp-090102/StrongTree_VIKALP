@@ -68,8 +68,9 @@ class FlowOCT:
         self.beta.append(self.model.add_var(var_type=CONTINUOUS, lb=-10, ub=10, name="beta0"))
         self.p.append(self.model.add_var(var_type=CONTINUOUS, lb=0, ub=10, name="p0"))
         
-        # Dummy objective. Note: The original version used quadratic terms (beta0^2, p0^2).
-        # Since multiplying variables is not allowed with CBC in python-mip, we use a linear objective.
+        # IMPORTANT: The original objective included quadratic terms like beta0^2.
+        # Since multiplying two variables (quadratic terms) is not supported by CBC,
+        # we now use a linear objective.
         self.model.objective = minimize(self.lam * self.b[0] + self.beta[0] + self.p[0])
         
         # Dummy constraint: beta0 + p0 >= 1.
