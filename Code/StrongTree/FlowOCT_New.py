@@ -5,11 +5,11 @@ import time
 import getopt
 import csv
 import pandas as pd
-from mip import Model, CONTINUOUS, minimize   # We force CBC via python-mip by setting solver_name="cbc"
+from mip import Model, CONTINUOUS, minimize   # using CBC via python-mip
 from sklearn.model_selection import train_test_split
 
 # ---------------------------
-# Logger: Redirect output to console and a log file.
+# Logger: Redirect output to both console and a log file.
 # ---------------------------
 class Logger:
     def __init__(self, filepath):
@@ -23,7 +23,7 @@ class Logger:
         self.log.flush()
 
 # ---------------------------
-# Tree class: (For storing tree properties; here, just depth)
+# Tree class: (For storing tree properties; here, just the depth)
 # ---------------------------
 class Tree:
     def __init__(self, depth):
@@ -31,10 +31,10 @@ class Tree:
 
 # ---------------------------
 # Dummy evaluation functions.
-# They now depend continuously on the surrogate decision variable x.
+# These functions now depend on the continuous surrogate variable x.
 # ---------------------------
 def get_acc(primal, data, x_value):
-    # Dummy accuracy: maximum (1.0) when x==0.5 and decreases linearly as |x-0.5| increases.
+    # Dummy accuracy: maximum (1.0) when x==0.5, and degrades linearly as |x-0.5| increases.
     return 1 - abs(x_value - 0.5)
 
 def get_mae(primal, data, x_value):
@@ -44,7 +44,7 @@ def get_mse(primal, data, x_value):
     return (x_value - 0.5) * (x_value - 0.5)
 
 def get_r_squared(primal, data, x_value):
-    # Dummy R²: Maximum 1 when x==0.5; here we use a simple normalization.
+    # Dummy R^2: maximum (1) when x==0.5; here we normalize by 0.25.
     return 1 - ((x_value - 0.5) * (x_value - 0.5)) / 0.25
 
 def print_tree(primal, x_value):
@@ -52,33 +52,43 @@ def print_tree(primal, x_value):
     print("x value:", x_value)
 
 # ---------------------------
-# FlowOCT class using python-mip (with CBC) and a PWL approximation.
+# FlowOCT class using python-mip (with CBC) and a manual PWL approximation.
 # ---------------------------
 class FlowOCT:
     def __init__(self, data, label, tree, lam, time_limit, mode):
         self.data = data
         self.label = label
         self.tree = tree
-        self.lam = lam            # Regularization parameter lambda
+        self.lam = lam            # Regularization parameter (lambda)
         self.time_limit = time_limit
         self.mode = mode
-        # Create a MILP model with minimization, forcing the CBC solver.
+        # Create a MILP model with minimization, forcing use of CBC.
         self.model = Model(sense=minimize, solver_name="cbc")
     
     def create_primal_problem(self):
-        # Create one continuous variable x in [0,1] as our surrogate decision variable.
+        # Create one continuous variable x in [0, 1] as our surrogate.
         self.x = self.model.add_var(var_type=CONTINUOUS, lb=0, ub=1, name="x")
-        # Define breakpoints for x and corresponding values for (x-0.5)^2.
+        # Define breakpoints (pts) and corresponding function values (vals) for (x-0.5)^2.
         pts = [0.0, 0.25, 0.5, 0.75, 1.0]
         vals = [0.25, 0.0625, 0.0, 0.0625, 0.25]
-        # Create a piecewise linear approximation of (x-0.5)^2.
-        # The add_pwl function returns a variable z such that z == f(x) for the convex breakpoints.
-        z = self.model.add_pwl(self.x, pts, vals)
+        n_bp = len(pts)
+        # Create convex combination (weight) variables for each breakpoint.
+        self.lam_vars = [self.model.add_var(var_type=CONTINUOUS, lb=0, ub=1, name=f"lambda_{i}") for i in range(n_bp)]
+        # Constraint: sum of weights equals 1.
+        self.model.add_constr(sum(self.lam_vars) == 1)
+        # Enforce that x is the convex combination of the breakpoints.
+        self.model.add_constr(self.x == sum(pts[i] * self.lam_vars[i] for i in range(n_bp)))
+        # Create a new variable z for approximating (x-0.5)^2.
+        self.z = self.model.add_var(var_type=CONTINUOUS, lb=min(vals), ub=max(vals), name="z")
+        # Enforce that z is the convex combination of the function values.
+        self.model.add_constr(self.z == sum(vals[i] * self.lam_vars[i] for i in range(n_bp)))
+        
         # Define the objective:
         #   f(x) = lambda * x + (1-lambda)*(1-x) + (x-0.5)^2 (approximated via z)
-        self.model.objective = minimize(self.lam * self.x + (1 - self.lam) * (1 - self.x) + z)
+        # Note: When lambda ∈ [0,1], the optimum would be x* = 1 - lambda.
+        self.model.objective = minimize(self.lam * self.x + (1 - self.lam) * (1 - self.x) + self.z)
         
-        # Set the maximum solving time if provided.
+        # Set a time limit if provided.
         if self.time_limit:
             self.model.max_seconds = self.time_limit
 
@@ -87,10 +97,10 @@ class FlowOCT:
 # ---------------------------
 def main(argv):
     print(argv)
-    input_file = None      # e.g., "adult.csv"
-    depth = None           # Maximum tree depth (for consistency)
+    input_file = None      # e.g. "adult.csv"
+    depth = None           # (kept for consistency; not used in this surrogate formulation)
     time_limit = None      # Time limit in seconds
-    _lambda = None         # The regularization parameter lambda
+    _lambda = None         # The regularization parameter (lambda)
     input_sample = None    # Sample index (to choose a random seed)
     calibration = None     # Calibration flag (1 or 0)
     mode = "classification"
@@ -120,7 +130,7 @@ def main(argv):
             mode = arg
 
     start_time = time.time()
-    # Set up the dataset path (assumed two levels up).
+    # Assume the DataSets folder is two levels up.
     data_path = os.getcwd() + '/../../DataSets/'
     data = pd.read_csv(data_path + input_file)
     label = "income"
