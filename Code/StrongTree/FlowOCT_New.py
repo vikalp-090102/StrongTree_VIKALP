@@ -68,9 +68,7 @@ class FlowOCT:
         self.beta.append(self.model.add_var(var_type=CONTINUOUS, lb=-10, ub=10, name="beta0"))
         self.p.append(self.model.add_var(var_type=CONTINUOUS, lb=0, ub=10, name="p0"))
         
-        # IMPORTANT: The original objective included quadratic terms like beta0^2.
-        # Since multiplying two variables (quadratic terms) is not supported by CBC,
-        # we now use a linear objective.
+        # IMPORTANT: Replace quadratic terms with a linear objective.
         self.model.objective = minimize(self.lam * self.b[0] + self.beta[0] + self.p[0])
         
         # Dummy constraint: beta0 + p0 >= 1.
@@ -225,7 +223,8 @@ def main(argv):
                 [approach_name, input_file, train_len, depth, _lambda, time_limit,
                  primal.model.status, primal.model.objective_value, train_acc,
                  (primal.model.gap * 100) if primal.model.gap is not None else None,
-                 primal.model.num_nodes, solving_time,
+                 0,  # Dummy value for num_nodes as it's not available in python-mip
+                 solving_time,
                  0, 0, 0, 0,   # Dummy callback counters and times.
                  test_acc, calibration_acc, input_sample])
         elif mode == "regression":
@@ -233,7 +232,8 @@ def main(argv):
                 [approach_name, input_file, train_len, depth, _lambda, time_limit,
                  primal.model.status, primal.model.objective_value, train_mae, test_mae, train_r_squared,
                  (primal.model.gap * 100) if primal.model.gap is not None else None,
-                 primal.model.num_nodes, solving_time,
+                 0,  # Dummy value for num_nodes as it's not available in python-mip
+                 solving_time,
                  0, 0, 0, 0,  # Dummy callback counters and times.
                  test_mae, calibration_mae,
                  test_mse, calibration_mse,
