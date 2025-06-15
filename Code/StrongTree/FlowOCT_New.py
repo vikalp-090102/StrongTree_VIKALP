@@ -5,11 +5,11 @@ import time
 import getopt
 import csv
 import pandas as pd
-from mip import Model, BINARY, CONTINUOUS, minimize  # Using python-mip (CBC solver)
+from mip import Model, BINARY, CONTINUOUS, minimize  # python-mip with CBC
 from sklearn.model_selection import train_test_split
 
 # ---------------------------
-# Logger: Redirects stdout to both console and a log file.
+# Logger: Redirect output to both console and a log file.
 # ---------------------------
 class Logger:
     def __init__(self, filepath):
@@ -23,19 +23,18 @@ class Logger:
         self.log.flush()
 
 # ---------------------------
-# Dummy Tree class (for storing tree depth)
+# Tree class: For storing tree properties (here, just depth)
 # ---------------------------
 class Tree:
     def __init__(self, depth):
         self.depth = depth
 
 # ---------------------------
-# Dummy evaluation functions
-# (Replace these with your actual evaluation logic as needed)
+# Dummy evaluation functions.
+# Replace these with your actual evaluation logic.
 # ---------------------------
 def get_acc(primal, data, b_value, beta_value, p_value):
-    # Here, you would normally use the decision variables to make predictions.
-    # For demonstration, we return a fixed value.
+    # Dummy: always returns 0.95.
     return 0.95
 
 def get_mae(primal, data, b_value, beta_value, p_value):
@@ -54,7 +53,7 @@ def print_tree(primal, b_value, beta_value, p_value):
     print("p values:", p_value)
 
 # ---------------------------
-# FlowOCT class using python-mip
+# FlowOCT class using python-mip and CBC solver.
 # ---------------------------
 class FlowOCT:
     def __init__(self, data, label, tree, lam, time_limit, mode):
@@ -64,13 +63,12 @@ class FlowOCT:
         self.lam = lam
         self.time_limit = time_limit
         self.mode = mode
-        # Create a MILP model (minimization)
-        self.model = Model(sense=minimize)
-        # Lists for decision variables. In your original formulation these are used
-        # to represent, for example, branch decisions or parameters of the tree.
-        self.b = []      # Binary variables
-        self.beta = []   # Continuous variables (could represent thresholds, slopes, etc.)
-        self.p = []      # Continuous variables (possibly representing predictions or probabilities)
+        # Create a MILP model with minimization and force CBC as solver.
+        self.model = Model(sense=minimize, solver_name="cbc")
+        # These lists will hold decision variables. You can modify this formulation as needed.
+        self.b = []      # e.g. binary variables for branch decisions
+        self.beta = []   # continuous parameters (e.g. thresholds or slopes)
+        self.p = []      # continuous parameters (e.g. predictions)
     
     def create_primal_problem(self):
         # For demonstration purposes, we create one variable in each list.
@@ -78,39 +76,34 @@ class FlowOCT:
         self.beta.append(self.model.add_var(var_type=CONTINUOUS, lb=-10, ub=10, name="beta0"))
         self.p.append(self.model.add_var(var_type=CONTINUOUS, lb=0, ub=10, name="p0"))
         
-        # To avoid quadratic terms (which CBC cannot handle), we use a linear objective.
-        # For example, here the objective is: minimize λ*b0 + beta0 + p0.
+        # A dummy objective that penalizes the binary variable with lambda and adds the continuous variables.
         self.model.objective = minimize(self.lam * self.b[0] + self.beta[0] + self.p[0])
-        
-        # A dummy constraint to force some activity in the model
+        # Dummy constraint: force beta0 + p0 to be at least 1.
         self.model.add_constr(self.beta[0] + self.p[0] >= 1)
         
-        # Set a time limit if provided (python-mip supports this via the max_seconds attribute)
+        # Set a time limit (python-mip supports this via the max_seconds attribute).
         if self.time_limit:
             self.model.max_seconds = self.time_limit
 
 # ---------------------------
-# Main Function.
+# Main function.
 # ---------------------------
 def main(argv):
     print(argv)
-    input_file = None
-    depth = None
-    time_limit = None
-    _lambda = None
-    input_sample = None
-    calibration = None
+    input_file = None      # e.g., "adult.csv"
+    depth = None           # maximum tree depth (integer)
+    time_limit = None      # time limit in seconds (integer)
+    _lambda = None         # lambda, used as a regularization parameter (float)
+    input_sample = None    # sample index to choose a random seed (integer)
+    calibration = None     # 1: use calibration split; 0: do not (integer)
     mode = "classification"
-    '''
-    Depending on the value of input_sample we choose one of the following random seeds 
-    and then split the data into train, test, and calibration sets.
-    '''
+
+    # Use one of several predefined random seeds based on input_sample.
     random_states_list = [41, 23, 45, 36, 19, 123]
 
     try:
         opts, args = getopt.getopt(argv, "f:d:t:l:i:c:m:",
-                                   ["input_file=", "depth=", "timelimit=", "lambda=",
-                                    "input_sample=", "calibration=", "mode="])
+                                   ["input_file=", "depth=", "timelimit=", "lambda=", "input_sample=", "calibration=", "mode="])
     except getopt.GetoptError:
         sys.exit(2)
     for opt, arg in opts:
@@ -130,84 +123,68 @@ def main(argv):
             mode = arg
 
     start_time = time.time()
-    
-    # Read the dataset. (Assumes your DataSets folder is two levels up.)
+    # Assumes that the DataSets folder is located two levels up.
     data_path = os.getcwd() + '/../../DataSets/'
     data = pd.read_csv(data_path + input_file)
-    # Name of the class label column. (Assume "income" for this dataset.)
-    label = 'income'
-    
-    # Create a tree object with the given depth.
+    # The class label column (here, "income")
+    label = "income"
+    # Create a tree object using the specified depth.
     tree = Tree(depth)
-    
+
     ##########################################################
-    # Output setup
+    # Output Setup
     ##########################################################
     approach_name = "FlowOCT"
-    out_put_name = (input_file + "_" + str(input_sample) + "_" + approach_name +
-                    "_d_" + str(depth) + "_t_" + str(time_limit) +
-                    "_lambda_" + str(_lambda) + "_c_" + str(calibration))
+    out_put_name = (f"{input_file}_{input_sample}_{approach_name}_d_{depth}_t_{time_limit}_lambda_{_lambda}_c_{calibration}")
     out_put_path = os.getcwd() + '/../../Results/'
-    # Redirect console output to a log file.
+    # Redirect output:
     sys.stdout = Logger(out_put_path + out_put_name + ".txt")
-    
+
     ##########################################################
-    # Data splitting
+    # Data Splitting
     ##########################################################
-    '''
-    Split the data into train (75% or 50%), test (25%), and calibration sets (if calibration==1).
-    If calibration is 1, we train on a 50% subset (from train) for calibration purposes.
-    '''
+    # Split data: 75% train, 25% test
     data_train, data_test = train_test_split(
         data, test_size=0.25, random_state=random_states_list[input_sample - 1])
+    # Further split train for calibration if needed.
     data_train_calibration, data_calibration = train_test_split(
         data_train, test_size=0.33, random_state=random_states_list[input_sample - 1])
     if calibration == 1:
         data_train = data_train_calibration
-
     train_len = len(data_train.index)
-    
+
     ##########################################################
-    # Create and solve the MIP problem
+    # Create and Solve the MIP Problem
     ##########################################################
-    # Instantiate your FlowOCT model (which represents a decision tree MIP formulation).
     primal = FlowOCT(data_train, label, tree, _lambda, time_limit, mode)
     primal.create_primal_problem()
-    # Optimize using python-mip's optimize() method.
     primal.model.optimize()
     end_time = time.time()
     solving_time = end_time - start_time
-    
+
     ##########################################################
-    # Retrieve the solution
+    # Retrieve Solution
     ##########################################################
     b_value = [var.x for var in primal.b]
     beta_value = [var.x for var in primal.beta]
     p_value = [var.x for var in primal.p]
-    
+
     print("\n\n")
     print_tree(primal, b_value, beta_value, p_value)
     print("\n\nTotal Solving Time", solving_time)
     print("obj value", primal.model.objective_value)
-    
-    # Callback information is not available in python-mip; we print zeros.
     print("Total Callback counter (Integer)", 0)
     print("Total Successful Callback counter (Integer)", 0)
     print("Total Callback Time (Integer)", 0)
     print("Total Successful Callback Time (Integer)", 0)
-    
+
     ##########################################################
     # Evaluation
     ##########################################################
-    '''
-    For classification we report accuracy.
-    For regression we report MAE, MSE, and R-squared.
-    (These functions are assumed to be defined in your utils module; here we use dummy versions.)
-    '''
     train_acc = test_acc = calibration_acc = 0
     train_mae = test_mae = calibration_mae = 0
     train_r_squared = test_r_squared = calibration_r_squared = 0
-    
+
     if mode == "classification":
         train_acc = get_acc(primal, data_train, b_value, beta_value, p_value)
         test_acc = get_acc(primal, data_test, b_value, beta_value, p_value)
@@ -222,7 +199,7 @@ def main(argv):
         train_r_squared = get_r_squared(primal, data_train, b_value, beta_value, p_value)
         test_r_squared = get_r_squared(primal, data_test, b_value, beta_value, p_value)
         calibration_r_squared = get_r_squared(primal, data_calibration, b_value, beta_value, p_value)
-    
+
     print("obj value", primal.model.objective_value)
     if mode == "classification":
         print("train acc", train_acc)
@@ -232,9 +209,9 @@ def main(argv):
         print("train mae", train_mae)
         print("train mse", train_mse)
         print("train r^2", train_r_squared)
-    
+
     ##########################################################
-    # Write output to files
+    # Write Output Files
     ##########################################################
     primal.model.write(out_put_path + out_put_name + ".lp")
     result_file = out_put_name + ".csv"
