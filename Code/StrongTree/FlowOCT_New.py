@@ -125,8 +125,8 @@ class FlowOCT_LogReg:
         objective = cp.Minimize(loss + reg)
         
         self.problem = cp.Problem(objective)
-        # Use the SCS solver with a time limit.
-        self.problem.solve(solver=cp.SCS, time_limit=self.time_limit)
+        # Solve using the SCS solver, using 'time_lim' parameter.
+        self.problem.solve(solver=cp.SCS, time_lim=self.time_limit)
 
 # ---------------------------
 # Main Function.
