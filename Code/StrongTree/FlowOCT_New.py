@@ -5,11 +5,11 @@ import time
 import getopt
 import csv
 import pandas as pd
-from mip import Model, CONTINUOUS, minimize  # using CBC via python-mip
+from mip import Model, CONTINUOUS, minimize   # We force CBC via python-mip by setting solver_name="cbc"
 from sklearn.model_selection import train_test_split
 
 # ---------------------------
-# Logger: Redirect output to both console and a log file.
+# Logger: Redirect output to console and a log file.
 # ---------------------------
 class Logger:
     def __init__(self, filepath):
@@ -23,7 +23,7 @@ class Logger:
         self.log.flush()
 
 # ---------------------------
-# Tree class: (For storing tree properties; here, just the depth)
+# Tree class: (For storing tree properties; here, just depth)
 # ---------------------------
 class Tree:
     def __init__(self, depth):
@@ -31,10 +31,10 @@ class Tree:
 
 # ---------------------------
 # Dummy evaluation functions.
-# These functions now depend continuously on the surrogate decision variable x.
+# They now depend continuously on the surrogate decision variable x.
 # ---------------------------
 def get_acc(primal, data, x_value):
-    # Define dummy accuracy as 1 - |x - 0.5|
+    # Dummy accuracy: maximum (1.0) when x==0.5 and decreases linearly as |x-0.5| increases.
     return 1 - abs(x_value - 0.5)
 
 def get_mae(primal, data, x_value):
@@ -44,7 +44,7 @@ def get_mse(primal, data, x_value):
     return (x_value - 0.5) * (x_value - 0.5)
 
 def get_r_squared(primal, data, x_value):
-    # Dummy: assume maximum R^2=1 when x == 0.5; a simple quadratic degradation
+    # Dummy R²: Maximum 1 when x==0.5; here we use a simple normalization.
     return 1 - ((x_value - 0.5) * (x_value - 0.5)) / 0.25
 
 def print_tree(primal, x_value):
@@ -52,9 +52,7 @@ def print_tree(primal, x_value):
     print("x value:", x_value)
 
 # ---------------------------
-# FlowOCT class using python-mip with CBC.
-# We now build a formulation with a single continuous variable x in [0,1],
-# and a quadratic objective that depends continuously on lambda.
+# FlowOCT class using python-mip (with CBC) and a PWL approximation.
 # ---------------------------
 class FlowOCT:
     def __init__(self, data, label, tree, lam, time_limit, mode):
@@ -64,18 +62,23 @@ class FlowOCT:
         self.lam = lam            # Regularization parameter lambda
         self.time_limit = time_limit
         self.mode = mode
-        # Create a MILP model with minimization, forcing CBC as solver.
+        # Create a MILP model with minimization, forcing the CBC solver.
         self.model = Model(sense=minimize, solver_name="cbc")
     
     def create_primal_problem(self):
-        # Create one continuous variable x in [0, 1] as our surrogate decision variable.
+        # Create one continuous variable x in [0,1] as our surrogate decision variable.
         self.x = self.model.add_var(var_type=CONTINUOUS, lb=0, ub=1, name="x")
-        # Construct the objective:
-        #    f(x) = lambda * x + (1 - lambda) * (1 - x) + (x - 0.5)^2.
-        # Instead of using **2, we use (x - 0.5) * (x - 0.5).
-        self.model.objective = minimize(self.lam * self.x + (1 - self.lam) * (1 - self.x) + (self.x - 0.5) * (self.x - 0.5))
+        # Define breakpoints for x and corresponding values for (x-0.5)^2.
+        pts = [0.0, 0.25, 0.5, 0.75, 1.0]
+        vals = [0.25, 0.0625, 0.0, 0.0625, 0.25]
+        # Create a piecewise linear approximation of (x-0.5)^2.
+        # The add_pwl function returns a variable z such that z == f(x) for the convex breakpoints.
+        z = self.model.add_pwl(self.x, pts, vals)
+        # Define the objective:
+        #   f(x) = lambda * x + (1-lambda)*(1-x) + (x-0.5)^2 (approximated via z)
+        self.model.objective = minimize(self.lam * self.x + (1 - self.lam) * (1 - self.x) + z)
         
-        # Set a time limit if provided.
+        # Set the maximum solving time if provided.
         if self.time_limit:
             self.model.max_seconds = self.time_limit
 
@@ -85,14 +88,14 @@ class FlowOCT:
 def main(argv):
     print(argv)
     input_file = None      # e.g., "adult.csv"
-    depth = None           # maximum depth (kept for consistency)
-    time_limit = None      # time limit in seconds
-    _lambda = None         # lambda (regularization parameter)
-    input_sample = None    # sample index to choose a random seed
-    calibration = None     # calibration flag (1 or 0)
+    depth = None           # Maximum tree depth (for consistency)
+    time_limit = None      # Time limit in seconds
+    _lambda = None         # The regularization parameter lambda
+    input_sample = None    # Sample index (to choose a random seed)
+    calibration = None     # Calibration flag (1 or 0)
     mode = "classification"
 
-    # Predefined random seeds.
+    # Predefined random seeds based on input_sample.
     random_states_list = [41, 23, 45, 36, 19, 123]
 
     try:
@@ -117,6 +120,7 @@ def main(argv):
             mode = arg
 
     start_time = time.time()
+    # Set up the dataset path (assumed two levels up).
     data_path = os.getcwd() + '/../../DataSets/'
     data = pd.read_csv(data_path + input_file)
     label = "income"
@@ -159,7 +163,7 @@ def main(argv):
     print("obj value", primal.model.objective_value)
 
     ##########################################################
-    # Evaluation
+    # Evaluation (dummy functions)
     ##########################################################
     train_acc = get_acc(primal, data_train, x_value)
     test_acc = get_acc(primal, data_test, x_value)
