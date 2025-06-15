@@ -9,7 +9,7 @@ from mip import Model, CONTINUOUS, minimize  # using CBC via python-mip
 from sklearn.model_selection import train_test_split
 
 # ---------------------------
-# Logger: Redirect output to console and a log file.
+# Logger: Redirect output to both console and a log file.
 # ---------------------------
 class Logger:
     def __init__(self, filepath):
@@ -31,22 +31,21 @@ class Tree:
 
 # ---------------------------
 # Dummy evaluation functions.
-# These are now defined as continuous functions of the single variable x.
-# You may replace these with appropriate evaluation logic later.
+# These functions now depend continuously on the surrogate decision variable x.
 # ---------------------------
 def get_acc(primal, data, x_value):
-    # Dummy accuracy: maximum (1) when x==0.5, and degrades linearly as |x-0.5| increases.
+    # Define dummy accuracy as 1 - |x - 0.5|
     return 1 - abs(x_value - 0.5)
 
 def get_mae(primal, data, x_value):
     return abs(x_value - 0.5)
 
 def get_mse(primal, data, x_value):
-    return (x_value - 0.5) ** 2
+    return (x_value - 0.5) * (x_value - 0.5)
 
 def get_r_squared(primal, data, x_value):
-    # Dummy R^2: maximum (1) when x==0.5; for our simple function we define:
-    return 1 - (x_value - 0.5) ** 2 / 0.25
+    # Dummy: assume maximum R^2=1 when x == 0.5; a simple quadratic degradation
+    return 1 - ((x_value - 0.5) * (x_value - 0.5)) / 0.25
 
 def print_tree(primal, x_value):
     print("Decision Tree Structure (continuous surrogate):")
@@ -54,34 +53,29 @@ def print_tree(primal, x_value):
 
 # ---------------------------
 # FlowOCT class using python-mip with CBC.
-# We now build a formulation with a single continuous variable x in [0,1]
-# and a quadratic objective that depends on lambda.
+# We now build a formulation with a single continuous variable x in [0,1],
+# and a quadratic objective that depends continuously on lambda.
 # ---------------------------
 class FlowOCT:
     def __init__(self, data, label, tree, lam, time_limit, mode):
         self.data = data
         self.label = label
         self.tree = tree
-        self.lam = lam            # regularization parameter λ
+        self.lam = lam            # Regularization parameter lambda
         self.time_limit = time_limit
         self.mode = mode
-        # Use a continuous variable x in [0, 1] as our surrogate decision variable.
+        # Create a MILP model with minimization, forcing CBC as solver.
         self.model = Model(sense=minimize, solver_name="cbc")
     
     def create_primal_problem(self):
-        # Create one continuous variable x between 0 and 1.
+        # Create one continuous variable x in [0, 1] as our surrogate decision variable.
         self.x = self.model.add_var(var_type=CONTINUOUS, lb=0, ub=1, name="x")
-        # Define a quadratic objective that depends on lambda:
-        #
-        #      f(x) = λ*x + (1-λ)*(1-x) + (x - 0.5)².
-        #
-        # Notice that if you differentiate f(x) (for λ in [0,1]),
-        # you obtain the optimum at x = 1 - λ.
-        #
-        # As λ varies in [0,1], x* = 1 - λ will vary continuously.
-        self.model.objective = minimize(self.lam * self.x + (1 - self.lam) * (1 - self.x) + (self.x - 0.5) ** 2)
+        # Construct the objective:
+        #    f(x) = lambda * x + (1 - lambda) * (1 - x) + (x - 0.5)^2.
+        # Instead of using **2, we use (x - 0.5) * (x - 0.5).
+        self.model.objective = minimize(self.lam * self.x + (1 - self.lam) * (1 - self.x) + (self.x - 0.5) * (self.x - 0.5))
         
-        # Set time limit if provided.
+        # Set a time limit if provided.
         if self.time_limit:
             self.model.max_seconds = self.time_limit
 
@@ -91,14 +85,14 @@ class FlowOCT:
 def main(argv):
     print(argv)
     input_file = None      # e.g., "adult.csv"
-    depth = None           # maximum depth (we keep this for consistency)
+    depth = None           # maximum depth (kept for consistency)
     time_limit = None      # time limit in seconds
-    _lambda = None         # the regularization parameter λ
-    input_sample = None    # sample index (to choose a random seed)
+    _lambda = None         # lambda (regularization parameter)
+    input_sample = None    # sample index to choose a random seed
     calibration = None     # calibration flag (1 or 0)
     mode = "classification"
 
-    # Predefined random seeds based on input_sample.
+    # Predefined random seeds.
     random_states_list = [41, 23, 45, 36, 19, 123]
 
     try:
@@ -167,7 +161,6 @@ def main(argv):
     ##########################################################
     # Evaluation
     ##########################################################
-    # Our dummy evaluation functions now take x_value.
     train_acc = get_acc(primal, data_train, x_value)
     test_acc = get_acc(primal, data_test, x_value)
     calibration_acc = get_acc(primal, data_calibration, x_value)
