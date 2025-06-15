@@ -1,3 +1,7 @@
+
+---
+
+```python
 #!/usr/bin/python
 import sys
 import os
@@ -32,20 +36,24 @@ class Tree:
 # ---------------------------
 # Dummy evaluation functions.
 # These functions now depend on the continuous surrogate variable x.
+# We scale the difference from 0.5 to provide more variation in the results.
 # ---------------------------
 def get_acc(primal, data, x_value):
-    # Dummy accuracy: maximum (1.0) when x==0.5, and degrades linearly as |x-0.5| increases.
-    return 1 - abs(x_value - 0.5)
+    # Accuracy: max(0, 1 - 2|x - 0.5|)
+    return max(0, 1 - 2 * abs(x_value - 0.5))
 
 def get_mae(primal, data, x_value):
-    return abs(x_value - 0.5)
+    # Mean absolute error: scaled difference (for demo)
+    return 2 * abs(x_value - 0.5)
 
 def get_mse(primal, data, x_value):
-    return (x_value - 0.5) * (x_value - 0.5)
+    # Mean squared error: square of scaled difference.
+    return (2 * (x_value - 0.5))**2
 
 def get_r_squared(primal, data, x_value):
-    # Dummy R^2: maximum (1) when x==0.5; here we normalize by 0.25.
-    return 1 - ((x_value - 0.5) * (x_value - 0.5)) / 0.25
+    # Dummy R^2: maximum 1 when x = 0.5; using normalization so that 
+    # if 2|x-0.5| equals 1 then R^2 becomes 0.
+    return max(0, 1 - ((2 * (x_value - 0.5))**2) / 1)
 
 def print_tree(primal, x_value):
     print("Decision Tree Structure (continuous surrogate):")
@@ -66,15 +74,15 @@ class FlowOCT:
         self.model = Model(sense=minimize, solver_name="cbc")
     
     def create_primal_problem(self):
-        # Create one continuous variable x in [0, 1] as our surrogate.
+        # Create one continuous variable x in [0,1] as our surrogate.
         self.x = self.model.add_var(var_type=CONTINUOUS, lb=0, ub=1, name="x")
-        # Define breakpoints (pts) and corresponding function values (vals) for (x-0.5)^2.
+        # Define breakpoints and function values for (x-0.5)^2.
         pts = [0.0, 0.25, 0.5, 0.75, 1.0]
         vals = [0.25, 0.0625, 0.0, 0.0625, 0.25]
         n_bp = len(pts)
         # Create convex combination (weight) variables for each breakpoint.
         self.lam_vars = [self.model.add_var(var_type=CONTINUOUS, lb=0, ub=1, name=f"lambda_{i}") for i in range(n_bp)]
-        # Constraint: sum of weights equals 1.
+        # Sum of weights equals 1.
         self.model.add_constr(sum(self.lam_vars) == 1)
         # Enforce that x is the convex combination of the breakpoints.
         self.model.add_constr(self.x == sum(pts[i] * self.lam_vars[i] for i in range(n_bp)))
@@ -84,11 +92,11 @@ class FlowOCT:
         self.model.add_constr(self.z == sum(vals[i] * self.lam_vars[i] for i in range(n_bp)))
         
         # Define the objective:
-        #   f(x) = lambda * x + (1-lambda)*(1-x) + (x-0.5)^2 (approximated via z)
-        # Note: When lambda ∈ [0,1], the optimum would be x* = 1 - lambda.
+        #    f(x) = lambda * x + (1-lambda) * (1-x) + (x-0.5)^2, approximated by z.
+        # The optimum of f(x) over x \in [0,1] is ideally x* = 1 - lambda.
         self.model.objective = minimize(self.lam * self.x + (1 - self.lam) * (1 - self.x) + self.z)
         
-        # Set a time limit if provided.
+        # Set the maximum solving time if provided.
         if self.time_limit:
             self.model.max_seconds = self.time_limit
 
@@ -98,11 +106,11 @@ class FlowOCT:
 def main(argv):
     print(argv)
     input_file = None      # e.g. "adult.csv"
-    depth = None           # (kept for consistency; not used in this surrogate formulation)
-    time_limit = None      # Time limit in seconds
-    _lambda = None         # The regularization parameter (lambda)
-    input_sample = None    # Sample index (to choose a random seed)
-    calibration = None     # Calibration flag (1 or 0)
+    depth = None           # maximum tree depth (kept for consistency)
+    time_limit = None      # time limit in seconds
+    _lambda = None         # the regularization parameter (lambda)
+    input_sample = None    # sample index (to choose a random seed)
+    calibration = None     # calibration flag (1 or 0)
     mode = "classification"
 
     # Predefined random seeds based on input_sample.
