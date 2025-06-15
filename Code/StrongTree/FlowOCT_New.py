@@ -68,7 +68,8 @@ def get_true_labels_lr(data):
 # Logistic Regression Helper Functions.
 # ---------------------------
 def sigmoid(z):
-    return 1/(1+np.exp(-z))
+    z = np.asarray(z, dtype=float)
+    return 1.0 / (1.0 + np.exp(-z))
 
 def predict_logreg(model, X):
     """
